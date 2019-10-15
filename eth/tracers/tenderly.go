@@ -14,6 +14,7 @@ type Tenderly struct {
 
 	status bool
 
+	from      common.Address
 	addresses []common.Address
 }
 
@@ -23,7 +24,7 @@ func NewTenderlyTracer() *Tenderly {
 
 func (tracer *Tenderly) CaptureStart(from common.Address, to common.Address, call bool, input []byte, gas uint64, value *big.Int) error {
 	tracer.status = true
-	tracer.addresses = append(tracer.addresses, from)
+	tracer.from = from
 	tracer.addresses = append(tracer.addresses, to)
 	return nil
 }
@@ -63,8 +64,10 @@ func (tracer *Tenderly) CaptureEnd(output []byte, gasUsed uint64, t time.Duratio
 
 func (tracer *Tenderly) GetResult() (json.RawMessage, error) {
 	return json.Marshal(struct {
+		From      common.Address   `json:"from"`
 		Addresses []common.Address `json:"addresses"`
 	}{
+		From:      tracer.from,
 		Addresses: tracer.addresses,
 	})
 }
