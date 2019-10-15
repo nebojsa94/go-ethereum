@@ -730,24 +730,29 @@ func (api *PrivateDebugAPI) traceTx(ctx context.Context, message core.Message, v
 	)
 	switch {
 	case config != nil && config.Tracer != nil:
-		// Define a meaningful timeout of a single transaction trace
-		timeout := defaultTraceTimeout
-		if config.Timeout != nil {
-			if timeout, err = time.ParseDuration(*config.Timeout); err != nil {
+		switch *config.Tracer {
+		case "tenderly_tracer":
+			tracer = tracers.NewTenderlyTracer()
+		default:
+			// Define a meaningful timeout of a single transaction trace
+			timeout := defaultTraceTimeout
+			if config.Timeout != nil {
+				if timeout, err = time.ParseDuration(*config.Timeout); err != nil {
+					return nil, err
+				}
+			}
+			// Constuct the JavaScript tracer to execute with
+			if tracer, err = tracers.New(*config.Tracer); err != nil {
 				return nil, err
 			}
+			// Handle timeouts and RPC cancellations
+			deadlineCtx, cancel := context.WithTimeout(ctx, timeout)
+			go func() {
+				<-deadlineCtx.Done()
+				tracer.(*tracers.Tracer).Stop(errors.New("execution timeout"))
+			}()
+			defer cancel()
 		}
-		// Constuct the JavaScript tracer to execute with
-		if tracer, err = tracers.New(*config.Tracer); err != nil {
-			return nil, err
-		}
-		// Handle timeouts and RPC cancellations
-		deadlineCtx, cancel := context.WithTimeout(ctx, timeout)
-		go func() {
-			<-deadlineCtx.Done()
-			tracer.(*tracers.Tracer).Stop(errors.New("execution timeout"))
-		}()
-		defer cancel()
 
 	case config == nil:
 		tracer = vm.NewStructLogger(nil)
@@ -773,6 +778,8 @@ func (api *PrivateDebugAPI) traceTx(ctx context.Context, message core.Message, v
 		}, nil
 
 	case *tracers.Tracer:
+		return tracer.GetResult()
+	case *tracers.Tenderly:
 		return tracer.GetResult()
 
 	default:
