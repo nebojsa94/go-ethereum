@@ -731,7 +731,7 @@ func (api *PrivateDebugAPI) traceTx(ctx context.Context, message core.Message, v
 	switch {
 	case config != nil && config.Tracer != nil:
 		switch *config.Tracer {
-		case "tenderly_tracer":
+		case "tenderlyTracer":
 			tracer = tracers.NewTenderlyTracer()
 		default:
 			// Define a meaningful timeout of a single transaction trace

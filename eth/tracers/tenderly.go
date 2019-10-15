@@ -14,7 +14,7 @@ type Tenderly struct {
 
 	status bool
 
-	addresses [][]byte
+	addresses []common.Address
 }
 
 func NewTenderlyTracer() *Tenderly {
@@ -23,14 +23,14 @@ func NewTenderlyTracer() *Tenderly {
 
 func (tracer *Tenderly) CaptureStart(from common.Address, to common.Address, call bool, input []byte, gas uint64, value *big.Int) error {
 	tracer.status = true
-	tracer.addresses = append(tracer.addresses, from.Bytes())
-	tracer.addresses = append(tracer.addresses, to.Bytes())
+	tracer.addresses = append(tracer.addresses, from)
+	tracer.addresses = append(tracer.addresses, to)
 	return nil
 }
 
 func (tracer *Tenderly) CaptureState(env *vm.EVM, pc uint64, op vm.OpCode, gas, cost uint64, memory *vm.Memory, stack *vm.Stack, contract *vm.Contract, depth int, err error) error {
 	if tracer.descended {
-		tracer.addresses = add(tracer.addresses, contract.CodeAddr.Bytes())
+		tracer.addresses = add(tracer.addresses, *contract.CodeAddr)
 		tracer.descended = false
 	}
 
@@ -62,12 +62,16 @@ func (tracer *Tenderly) CaptureEnd(output []byte, gasUsed uint64, t time.Duratio
 }
 
 func (tracer *Tenderly) GetResult() (json.RawMessage, error) {
-	return json.Marshal(tracer.addresses)
+	return json.Marshal(struct {
+		Addresses []common.Address `json:"addresses"`
+	}{
+		Addresses: tracer.addresses,
+	})
 }
 
-func add(slice [][]byte, item []byte) [][]byte {
+func add(slice []common.Address, item common.Address) []common.Address {
 	for _, i := range slice {
-		if common.BytesToHash(i) == common.BytesToHash(item) {
+		if i == item {
 			return slice
 		}
 	}
