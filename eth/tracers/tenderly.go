@@ -12,8 +12,6 @@ import (
 type Tenderly struct {
 	descended bool
 
-	status bool
-
 	from      common.Address
 	addresses []common.Address
 }
@@ -23,7 +21,6 @@ func NewTenderlyTracer() *Tenderly {
 }
 
 func (tracer *Tenderly) CaptureStart(from common.Address, to common.Address, call bool, input []byte, gas uint64, value *big.Int) error {
-	tracer.status = true
 	tracer.from = from
 	tracer.addresses = append(tracer.addresses, to)
 	return nil
@@ -44,17 +41,17 @@ func (tracer *Tenderly) CaptureState(env *vm.EVM, pc uint64, op vm.OpCode, gas, 
 			return nil
 		}
 
-		tracer.descended = true
+		if len(stack.Data()) < 2 {
+			return nil
+		}
+
+		tracer.addresses = append(tracer.addresses, common.BigToAddress(stack.Data()[len(stack.Data())-2]))
 	}
 
 	return nil
 }
 
 func (tracer *Tenderly) CaptureFault(env *vm.EVM, pc uint64, op vm.OpCode, gas, cost uint64, memory *vm.Memory, stack *vm.Stack, contract *vm.Contract, depth int, err error) error {
-	if depth == 1 {
-		tracer.status = false
-	}
-
 	return nil
 }
 
