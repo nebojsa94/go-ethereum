@@ -31,7 +31,7 @@ func (tracer *Tenderly) CaptureStart(from common.Address, to common.Address, cal
 
 func (tracer *Tenderly) CaptureState(env *vm.EVM, pc uint64, op vm.OpCode, gas, cost uint64, memory *vm.Memory, stack *vm.Stack, contract *vm.Contract, depth int, err error) error {
 	if tracer.descended {
-		tracer.addresses = add(tracer.addresses, *contract.CodeAddr)
+		tracer.addresses = append(tracer.addresses, *contract.CodeAddr)
 		tracer.descended = false
 	}
 
@@ -70,14 +70,4 @@ func (tracer *Tenderly) GetResult() (json.RawMessage, error) {
 		From:      tracer.from,
 		Addresses: tracer.addresses,
 	})
-}
-
-func add(slice []common.Address, item common.Address) []common.Address {
-	for _, i := range slice {
-		if i == item {
-			return slice
-		}
-	}
-
-	return append(slice, item)
 }
