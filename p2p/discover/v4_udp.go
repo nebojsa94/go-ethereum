@@ -49,7 +49,7 @@ var (
 )
 
 const (
-	respTimeout    = 5000 * time.Millisecond
+	respTimeout    = 15000 * time.Millisecond
 	expiration     = 20 * time.Second
 	bondExpiration = 24 * time.Hour
 
