@@ -186,7 +186,16 @@ func testOdr(t *testing.T, protocol int, expFail uint64, checkCached bool, fn od
 	server, client, tearDown := newClientServerEnv(t, 4, protocol, nil, nil, 0, false, true)
 	defer tearDown()
 
-	client.handler.synchronise(client.peer.peer)
+	client.handler.synchronise(client.peer.speer)
+
+	// Ensure the client has synced all necessary data.
+	clientHead := client.handler.backend.blockchain.CurrentHeader()
+	if clientHead.Number.Uint64() != 4 {
+		t.Fatalf("Failed to sync the chain with server, head: %v", clientHead.Number.Uint64())
+	}
+	// Disable the mechanism that we will wait a few time for request
+	// even there is no suitable peer to send right now.
+	waitForPeers = 0
 
 	test := func(expFail uint64) {
 		// Mark this as a helper to put the failures at the correct lines
@@ -196,7 +205,9 @@ func testOdr(t *testing.T, protocol int, expFail uint64, checkCached bool, fn od
 			bhash := rawdb.ReadCanonicalHash(server.db, i)
 			b1 := fn(light.NoOdr, server.db, server.handler.server.chainConfig, server.handler.blockchain, nil, bhash)
 
-			ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+			// Set the timeout as 1 second here, ensure there is enough time
+			// for travis to make the action.
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 			b2 := fn(ctx, client.db, client.handler.backend.chainConfig, nil, client.handler.backend.blockchain, bhash)
 			cancel()
 
@@ -213,19 +224,19 @@ func testOdr(t *testing.T, protocol int, expFail uint64, checkCached bool, fn od
 
 	// expect retrievals to fail (except genesis block) without a les peer
 	client.handler.backend.peers.lock.Lock()
-	client.peer.peer.hasBlock = func(common.Hash, uint64, bool) bool { return false }
+	client.peer.speer.hasBlock = func(common.Hash, uint64, bool) bool { return false }
 	client.handler.backend.peers.lock.Unlock()
 	test(expFail)
 
 	// expect all retrievals to pass
 	client.handler.backend.peers.lock.Lock()
-	client.peer.peer.hasBlock = func(common.Hash, uint64, bool) bool { return true }
+	client.peer.speer.hasBlock = func(common.Hash, uint64, bool) bool { return true }
 	client.handler.backend.peers.lock.Unlock()
 	test(5)
 
 	// still expect all retrievals to pass, now data should be cached locally
 	if checkCached {
-		client.handler.backend.peers.Unregister(client.peer.peer.id)
+		client.handler.backend.peers.unregister(client.peer.speer.id)
 		time.Sleep(time.Millisecond * 10) // ensure that all peerSetNotify callbacks are executed
 		test(5)
 	}

@@ -45,7 +45,7 @@ func init() {
 	// Set up the CLI app.
 	app.Flags = append(app.Flags, debug.Flags...)
 	app.Before = func(ctx *cli.Context) error {
-		return debug.Setup(ctx, "")
+		return debug.Setup(ctx)
 	}
 	app.After = func(ctx *cli.Context) error {
 		debug.Exit()
@@ -60,6 +60,7 @@ func init() {
 		enrdumpCommand,
 		discv4Command,
 		dnsCommand,
+		nodesetCommand,
 	}
 }
 

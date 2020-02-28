@@ -101,17 +101,14 @@ func (h *serverHandler) stop() {
 
 // runPeer is the p2p protocol run function for the given version.
 func (h *serverHandler) runPeer(version uint, p *p2p.Peer, rw p2p.MsgReadWriter) error {
-	peer := newPeer(int(version), h.server.config.NetworkId, false, p, newMeteredMsgWriter(rw, int(version)))
+	peer := newClientPeer(int(version), h.server.config.NetworkId, p, newMeteredMsgWriter(rw, int(version)))
+	defer peer.close()
 	h.wg.Add(1)
 	defer h.wg.Done()
 	return h.handle(peer)
 }
 
-func (h *serverHandler) handle(p *peer) error {
-	// Reject light clients if server is not synced.
-	if !h.synced() {
-		return p2p.DiscRequested
-	}
+func (h *serverHandler) handle(p *clientPeer) error {
 	p.Log().Debug("Light Ethereum peer connected", "name", p.Name())
 
 	// Execute the LES handshake
@@ -125,6 +122,16 @@ func (h *serverHandler) handle(p *peer) error {
 		p.Log().Debug("Light Ethereum handshake failed", "err", err)
 		return err
 	}
+	if p.server {
+		// connected to another server, no messages expected, just wait for disconnection
+		_, err := p.rw.ReadMsg()
+		return err
+	}
+	// Reject light clients if server is not synced.
+	if !h.synced() {
+		p.Log().Debug("Light server not synced, rejecting peer")
+		return p2p.DiscRequested
+	}
 	defer p.fcClient.Disconnect()
 
 	// Disconnect the inbound peer if it's rejected by clientPool
@@ -133,21 +140,21 @@ func (h *serverHandler) handle(p *peer) error {
 		return errFullClientPool
 	}
 	// Register the peer locally
-	if err := h.server.peers.Register(p); err != nil {
+	if err := h.server.peers.register(p); err != nil {
 		h.server.clientPool.disconnect(p)
 		p.Log().Error("Light Ethereum peer registration failed", "err", err)
 		return err
 	}
-	clientConnectionGauge.Update(int64(h.server.peers.Len()))
+	clientConnectionGauge.Update(int64(h.server.peers.len()))
 
 	var wg sync.WaitGroup // Wait group used to track all in-flight task routines.
 
 	connectedAt := mclock.Now()
 	defer func() {
 		wg.Wait() // Ensure all background task routines have exited.
-		h.server.peers.Unregister(p.id)
+		h.server.peers.unregister(p.id)
 		h.server.clientPool.disconnect(p)
-		clientConnectionGauge.Update(int64(h.server.peers.Len()))
+		clientConnectionGauge.Update(int64(h.server.peers.len()))
 		connectionTimer.Update(time.Duration(mclock.Now() - connectedAt))
 	}()
 
@@ -168,7 +175,7 @@ func (h *serverHandler) handle(p *peer) error {
 
 // handleMsg is invoked whenever an inbound message is received from a remote
 // peer. The remote connection is torn down upon returning any error.
-func (h *serverHandler) handleMsg(p *peer, wg *sync.WaitGroup) error {
+func (h *serverHandler) handleMsg(p *clientPeer, wg *sync.WaitGroup) error {
 	// Read the next message from the remote peer, and ensure it's fully consumed
 	msg, err := p.rw.ReadMsg()
 	if err != nil {
@@ -202,7 +209,7 @@ func (h *serverHandler) handleMsg(p *peer, wg *sync.WaitGroup) error {
 		maxCost = p.fcCosts.getMaxCost(msg.Code, reqCnt)
 		accepted, bufShort, priority := p.fcClient.AcceptRequest(reqID, responseCount, maxCost)
 		if !accepted {
-			p.freezeClient()
+			p.freeze()
 			p.Log().Error("Request came too early", "remaining", common.PrettyDuration(time.Duration(bufShort*1000000/p.fcParams.MinRecharge)))
 			p.fcClient.OneTimeCost(inSizeCost)
 			return false
@@ -252,7 +259,7 @@ func (h *serverHandler) handleMsg(p *peer, wg *sync.WaitGroup) error {
 			h.server.clientPool.requestCost(p, realCost)
 		}
 		if reply != nil {
-			p.queueSend(func() {
+			p.mustQueueSend(func() {
 				if err := reply.send(bv); err != nil {
 					select {
 					case p.errCh <- err:
@@ -268,7 +275,6 @@ func (h *serverHandler) handleMsg(p *peer, wg *sync.WaitGroup) error {
 		if metrics.EnabledExpensive {
 			miscInHeaderPacketsMeter.Mark(1)
 			miscInHeaderTrafficMeter.Mark(int64(msg.Size))
-			defer func(start time.Time) { miscServingTimeHeaderTimer.UpdateSince(start) }(time.Now())
 		}
 		var req struct {
 			ReqID uint64
@@ -367,11 +373,12 @@ func (h *serverHandler) handleMsg(p *peer, wg *sync.WaitGroup) error {
 					}
 					first = false
 				}
-				reply := p.ReplyBlockHeaders(req.ReqID, headers)
-				sendResponse(req.ReqID, query.Amount, p.ReplyBlockHeaders(req.ReqID, headers), task.done())
+				reply := p.replyBlockHeaders(req.ReqID, headers)
+				sendResponse(req.ReqID, query.Amount, p.replyBlockHeaders(req.ReqID, headers), task.done())
 				if metrics.EnabledExpensive {
 					miscOutHeaderPacketsMeter.Mark(1)
 					miscOutHeaderTrafficMeter.Mark(int64(reply.size()))
+					miscServingTimeHeaderTimer.Update(time.Duration(task.servingTime))
 				}
 			}()
 		}
@@ -381,7 +388,6 @@ func (h *serverHandler) handleMsg(p *peer, wg *sync.WaitGroup) error {
 		if metrics.EnabledExpensive {
 			miscInBodyPacketsMeter.Mark(1)
 			miscInBodyTrafficMeter.Mark(int64(msg.Size))
-			defer func(start time.Time) { miscServingTimeBodyTimer.UpdateSince(start) }(time.Now())
 		}
 		var req struct {
 			ReqID  uint64
@@ -416,11 +422,12 @@ func (h *serverHandler) handleMsg(p *peer, wg *sync.WaitGroup) error {
 					bodies = append(bodies, body)
 					bytes += len(body)
 				}
-				reply := p.ReplyBlockBodiesRLP(req.ReqID, bodies)
+				reply := p.replyBlockBodiesRLP(req.ReqID, bodies)
 				sendResponse(req.ReqID, uint64(reqCnt), reply, task.done())
 				if metrics.EnabledExpensive {
 					miscOutBodyPacketsMeter.Mark(1)
 					miscOutBodyTrafficMeter.Mark(int64(reply.size()))
+					miscServingTimeBodyTimer.Update(time.Duration(task.servingTime))
 				}
 			}()
 		}
@@ -430,7 +437,6 @@ func (h *serverHandler) handleMsg(p *peer, wg *sync.WaitGroup) error {
 		if metrics.EnabledExpensive {
 			miscInCodePacketsMeter.Mark(1)
 			miscInCodeTrafficMeter.Mark(int64(msg.Size))
-			defer func(start time.Time) { miscServingTimeCodeTimer.UpdateSince(start) }(time.Now())
 		}
 		var req struct {
 			ReqID uint64
@@ -488,11 +494,12 @@ func (h *serverHandler) handleMsg(p *peer, wg *sync.WaitGroup) error {
 						break
 					}
 				}
-				reply := p.ReplyCode(req.ReqID, data)
+				reply := p.replyCode(req.ReqID, data)
 				sendResponse(req.ReqID, uint64(reqCnt), reply, task.done())
 				if metrics.EnabledExpensive {
 					miscOutCodePacketsMeter.Mark(1)
 					miscOutCodeTrafficMeter.Mark(int64(reply.size()))
+					miscServingTimeCodeTimer.Update(time.Duration(task.servingTime))
 				}
 			}()
 		}
@@ -502,7 +509,6 @@ func (h *serverHandler) handleMsg(p *peer, wg *sync.WaitGroup) error {
 		if metrics.EnabledExpensive {
 			miscInReceiptPacketsMeter.Mark(1)
 			miscInReceiptTrafficMeter.Mark(int64(msg.Size))
-			defer func(start time.Time) { miscServingTimeReceiptTimer.UpdateSince(start) }(time.Now())
 		}
 		var req struct {
 			ReqID  uint64
@@ -545,11 +551,12 @@ func (h *serverHandler) handleMsg(p *peer, wg *sync.WaitGroup) error {
 						bytes += len(encoded)
 					}
 				}
-				reply := p.ReplyReceiptsRLP(req.ReqID, receipts)
+				reply := p.replyReceiptsRLP(req.ReqID, receipts)
 				sendResponse(req.ReqID, uint64(reqCnt), reply, task.done())
 				if metrics.EnabledExpensive {
 					miscOutReceiptPacketsMeter.Mark(1)
 					miscOutReceiptTrafficMeter.Mark(int64(reply.size()))
+					miscServingTimeReceiptTimer.Update(time.Duration(task.servingTime))
 				}
 			}()
 		}
@@ -559,7 +566,6 @@ func (h *serverHandler) handleMsg(p *peer, wg *sync.WaitGroup) error {
 		if metrics.EnabledExpensive {
 			miscInTrieProofPacketsMeter.Mark(1)
 			miscInTrieProofTrafficMeter.Mark(int64(msg.Size))
-			defer func(start time.Time) { miscServingTimeTrieProofTimer.UpdateSince(start) }(time.Now())
 		}
 		var req struct {
 			ReqID uint64
@@ -648,11 +654,12 @@ func (h *serverHandler) handleMsg(p *peer, wg *sync.WaitGroup) error {
 						break
 					}
 				}
-				reply := p.ReplyProofsV2(req.ReqID, nodes.NodeList())
+				reply := p.replyProofsV2(req.ReqID, nodes.NodeList())
 				sendResponse(req.ReqID, uint64(reqCnt), reply, task.done())
 				if metrics.EnabledExpensive {
 					miscOutTrieProofPacketsMeter.Mark(1)
 					miscOutTrieProofTrafficMeter.Mark(int64(reply.size()))
+					miscServingTimeTrieProofTimer.Update(time.Duration(task.servingTime))
 				}
 			}()
 		}
@@ -662,7 +669,6 @@ func (h *serverHandler) handleMsg(p *peer, wg *sync.WaitGroup) error {
 		if metrics.EnabledExpensive {
 			miscInHelperTriePacketsMeter.Mark(1)
 			miscInHelperTrieTrafficMeter.Mark(int64(msg.Size))
-			defer func(start time.Time) { miscServingTimeHelperTrieTimer.UpdateSince(start) }(time.Now())
 		}
 		var req struct {
 			ReqID uint64
@@ -723,11 +729,12 @@ func (h *serverHandler) handleMsg(p *peer, wg *sync.WaitGroup) error {
 						break
 					}
 				}
-				reply := p.ReplyHelperTrieProofs(req.ReqID, HelperTrieResps{Proofs: nodes.NodeList(), AuxData: auxData})
+				reply := p.replyHelperTrieProofs(req.ReqID, HelperTrieResps{Proofs: nodes.NodeList(), AuxData: auxData})
 				sendResponse(req.ReqID, uint64(reqCnt), reply, task.done())
 				if metrics.EnabledExpensive {
 					miscOutHelperTriePacketsMeter.Mark(1)
 					miscOutHelperTrieTrafficMeter.Mark(int64(reply.size()))
+					miscServingTimeHelperTrieTimer.Update(time.Duration(task.servingTime))
 				}
 			}()
 		}
@@ -737,7 +744,6 @@ func (h *serverHandler) handleMsg(p *peer, wg *sync.WaitGroup) error {
 		if metrics.EnabledExpensive {
 			miscInTxsPacketsMeter.Mark(1)
 			miscInTxsTrafficMeter.Mark(int64(msg.Size))
-			defer func(start time.Time) { miscServingTimeTxTimer.UpdateSince(start) }(time.Now())
 		}
 		var req struct {
 			ReqID uint64
@@ -772,11 +778,12 @@ func (h *serverHandler) handleMsg(p *peer, wg *sync.WaitGroup) error {
 						stats[i] = h.txStatus(hash)
 					}
 				}
-				reply := p.ReplyTxStatus(req.ReqID, stats)
+				reply := p.replyTxStatus(req.ReqID, stats)
 				sendResponse(req.ReqID, uint64(reqCnt), reply, task.done())
 				if metrics.EnabledExpensive {
 					miscOutTxsPacketsMeter.Mark(1)
 					miscOutTxsTrafficMeter.Mark(int64(reply.size()))
+					miscServingTimeTxTimer.Update(time.Duration(task.servingTime))
 				}
 			}()
 		}
@@ -786,7 +793,6 @@ func (h *serverHandler) handleMsg(p *peer, wg *sync.WaitGroup) error {
 		if metrics.EnabledExpensive {
 			miscInTxStatusPacketsMeter.Mark(1)
 			miscInTxStatusTrafficMeter.Mark(int64(msg.Size))
-			defer func(start time.Time) { miscServingTimeTxStatusTimer.UpdateSince(start) }(time.Now())
 		}
 		var req struct {
 			ReqID  uint64
@@ -809,11 +815,12 @@ func (h *serverHandler) handleMsg(p *peer, wg *sync.WaitGroup) error {
 					}
 					stats[i] = h.txStatus(hash)
 				}
-				reply := p.ReplyTxStatus(req.ReqID, stats)
+				reply := p.replyTxStatus(req.ReqID, stats)
 				sendResponse(req.ReqID, uint64(reqCnt), reply, task.done())
 				if metrics.EnabledExpensive {
 					miscOutTxStatusPacketsMeter.Mark(1)
 					miscOutTxStatusTrafficMeter.Mark(int64(reply.size()))
+					miscServingTimeTxStatusTimer.Update(time.Duration(task.servingTime))
 				}
 			}()
 		}
@@ -907,7 +914,7 @@ func (h *serverHandler) broadcastHeaders() {
 	for {
 		select {
 		case ev := <-headCh:
-			peers := h.server.peers.AllPeers()
+			peers := h.server.peers.allPeers()
 			if len(peers) == 0 {
 				continue
 			}
@@ -933,14 +940,18 @@ func (h *serverHandler) broadcastHeaders() {
 				p := p
 				switch p.announceType {
 				case announceTypeSimple:
-					p.queueSend(func() { p.SendAnnounce(announce) })
+					if !p.queueSend(func() { p.sendAnnounce(announce) }) {
+						log.Debug("Drop announcement because queue is full", "number", number, "hash", hash)
+					}
 				case announceTypeSigned:
 					if !signed {
 						signedAnnounce = announce
 						signedAnnounce.sign(h.server.privateKey)
 						signed = true
 					}
-					p.queueSend(func() { p.SendAnnounce(signedAnnounce) })
+					if !p.queueSend(func() { p.sendAnnounce(signedAnnounce) }) {
+						log.Debug("Drop announcement because queue is full", "number", number, "hash", hash)
+					}
 				}
 			}
 		case <-h.closeCh:
