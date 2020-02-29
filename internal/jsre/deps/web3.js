@@ -3812,6 +3812,32 @@ var outputTransactionReceiptFormatter = function (receipt){
 };
 
 /**
+ * Formats the output of a transaction receipt to its proper values
+ *
+ * @method outputTransactionReceiptFormatter
+ * @param {Array} receipts
+ * @returns {Array}
+ */
+var outputBlockReceiptsFormatter = function (receipts){
+  receipts.map(function (receipt) {
+    if(receipt.blockNumber !== null)
+      receipt.blockNumber = utils.toDecimal(receipt.blockNumber);
+    if(receipt.transactionIndex !== null)
+      receipt.transactionIndex = utils.toDecimal(receipt.transactionIndex);
+    receipt.cumulativeGasUsed = utils.toDecimal(receipt.cumulativeGasUsed);
+    receipt.gasUsed = utils.toDecimal(receipt.gasUsed);
+
+    if(utils.isArray(receipt.logs)) {
+      receipt.logs = receipt.logs.map(function(log){
+        return outputLogFormatter(log);
+      });
+    }
+  });
+
+  return receipts;
+};
+
+/**
  * Formats the output of a block to its proper values
  *
  * @method outputBlockFormatter
@@ -3957,6 +3983,7 @@ module.exports = {
     outputBigNumberFormatter: outputBigNumberFormatter,
     outputTransactionFormatter: outputTransactionFormatter,
     outputTransactionReceiptFormatter: outputTransactionReceiptFormatter,
+    outputBlockReceiptsFormatter: outputBlockReceiptsFormatter,
     outputBlockFormatter: outputBlockFormatter,
     outputLogFormatter: outputLogFormatter,
     outputPostFormatter: outputPostFormatter,
@@ -5350,6 +5377,13 @@ var methods = function () {
         outputFormatter: formatters.outputTransactionReceiptFormatter
     });
 
+    var getBlockReceipts = new Method({
+        name: 'getBlockReceipts',
+        call: 'eth_getBlockReceipts',
+        params: 1,
+        outputFormatter: formatters.outputBlockReceiptsFormatter
+    });
+
     var getTransactionCount = new Method({
         name: 'getTransactionCount',
         call: 'eth_getTransactionCount',
@@ -5443,6 +5477,7 @@ var methods = function () {
         getTransaction,
         getTransactionFromBlock,
         getTransactionReceipt,
+        getBlockReceipts,
         getTransactionCount,
         call,
         estimateGas,

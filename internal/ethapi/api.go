@@ -1332,6 +1332,63 @@ func (s *PublicTransactionPoolAPI) GetTransactionReceipt(ctx context.Context, ha
 	return fields, nil
 }
 
+// GetBlockReceipts returns the block transaction receipts for the given block number.
+func (s *PublicTransactionPoolAPI) GetBlockReceipts(ctx context.Context, number rpc.BlockNumber) ([]map[string]interface{}, error) {
+	block, err := s.b.BlockByNumber(ctx, number)
+	if err != nil {
+		return nil, fmt.Errorf("block #%d not found", number)
+	}
+	if len(block.Transactions()) == 0 {
+		return []map[string]interface{}{}, nil
+	}
+	receipts, err := s.b.GetReceipts(ctx, block.Hash())
+	if err != nil {
+		return nil, err
+	}
+
+	var receiptFields []map[string]interface{}
+	transactions := block.Transactions()
+	for i, receipt := range receipts {
+		tx := transactions[i]
+		var signer types.Signer = types.FrontierSigner{}
+		if tx.Protected() {
+			signer = types.NewEIP155Signer(tx.ChainId())
+		}
+		from, _ := types.Sender(signer, tx)
+
+		fields := map[string]interface{}{
+			"blockHash":         block.Hash(),
+			"blockNumber":       hexutil.Uint64(number),
+			"transactionHash":   tx.Hash(),
+			"transactionIndex":  hexutil.Uint64(i),
+			"from":              from,
+			"to":                tx.To(),
+			"gasUsed":           hexutil.Uint64(receipt.GasUsed),
+			"cumulativeGasUsed": hexutil.Uint64(receipt.CumulativeGasUsed),
+			"contractAddress":   nil,
+			"logs":              receipt.Logs,
+			"logsBloom":         receipt.Bloom,
+		}
+
+		// Assign receipt status or post state.
+		if len(receipt.PostState) > 0 {
+			fields["root"] = hexutil.Bytes(receipt.PostState)
+		} else {
+			fields["status"] = hexutil.Uint(receipt.Status)
+		}
+		if receipt.Logs == nil {
+			fields["logs"] = [][]*types.Log{}
+		}
+		// If the ContractAddress is 20 0x0 bytes, assume it is not a contract creation
+		if receipt.ContractAddress != (common.Address{}) {
+			fields["contractAddress"] = receipt.ContractAddress
+		}
+
+		receiptFields = append(receiptFields, fields)
+	}
+	return receiptFields, nil
+}
+
 // sign is a helper function that signs a transaction with the private key of the given address.
 func (s *PublicTransactionPoolAPI) sign(addr common.Address, tx *types.Transaction) (*types.Transaction, error) {
 	// Look up the wallet containing the requested signer
