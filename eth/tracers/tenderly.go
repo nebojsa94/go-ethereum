@@ -2,7 +2,6 @@ package tracers
 
 import (
 	"encoding/json"
-	"errors"
 	"math/big"
 	"time"
 
@@ -12,21 +11,21 @@ import (
 )
 
 type Call struct {
-	CallType      string          `json:"callType"`
-	From          common.Address  `json:"from"`
-	To            *common.Address `json:"to"`
-	Gas           hexutil.Uint    `json:"gas"`
-	GasUsed       *hexutil.Uint64 `json:"gasUsed"`
-	Value         *hexutil.Big    `json:"value"`
-	Address       *common.Address `json:"address"`
-	Balance       *hexutil.Big    `json:"balance"`
-	RefundAddress *common.Address `json:"refundAddress"`
-	Error         error           `json:"error"`
-	Subtraces     int             `json:"subtraces"`
-	TraceAddress  []int           `json:"traceAddress"`
-	Type          string          `json:"type"`
-	Input         hexutil.Bytes   `json:"input"`
-	Output        hexutil.Bytes   `json:"output"`
+	CallType      string          `json:"callType,omitempty"`
+	From          common.Address  `json:"from,omitempty"`
+	To            *common.Address `json:"to,omitempty"`
+	Gas           hexutil.Uint    `json:"gas,omitempty"`
+	GasUsed       *hexutil.Uint64 `json:"gasUsed,omitempty"`
+	Value         *hexutil.Big    `json:"value,omitempty"`
+	Address       *common.Address `json:"address,omitempty"`
+	Balance       *hexutil.Big    `json:"balance,omitempty"`
+	RefundAddress *common.Address `json:"refundAddress,omitempty"`
+	Error         *string         `json:"error,omitempty"`
+	Subtraces     int             `json:"subtraces,omitempty"`
+	TraceAddress  []int           `json:"traceAddress,omitempty"`
+	Type          string          `json:"type,omitempty"`
+	Input         hexutil.Bytes   `json:"input,omitempty"`
+	Output        hexutil.Bytes   `json:"output,omitempty"`
 	gasIn         uint64
 	gasCost       uint64
 	outOff        uint64
@@ -195,7 +194,7 @@ func (tracer *Tenderly) CaptureState(env *vm.EVM, pc uint64, op vm.OpCode, gas, 
 	}
 
 	if op == vm.REVERT {
-		tracer.callTrace[len(tracer.callTrace)-1].Error = errors.New("execution error")
+		tracer.callTrace[len(tracer.callTrace)-1].Error = newErr("execution error")
 		return nil
 	}
 
@@ -213,7 +212,7 @@ func (tracer *Tenderly) CaptureState(env *vm.EVM, pc uint64, op vm.OpCode, gas, 
 				call.Address = &address
 				call.Output = env.StateDB.GetCode(common.BigToAddress(ret))
 			} else if call.Error == nil {
-				call.Error = errors.New("internal failure")
+				call.Error = newErr("internal failure")
 			}
 		} else {
 			if call.Gas != 0 {
@@ -223,7 +222,7 @@ func (tracer *Tenderly) CaptureState(env *vm.EVM, pc uint64, op vm.OpCode, gas, 
 				if ret != big.NewInt(0) {
 					call.Output = slice(memory, int64(call.outOff), int64(call.outOff+call.outLen))
 				} else if call.Error == nil {
-					call.Error = errors.New("internal failure")
+					call.Error = newErr("internal failure")
 				}
 			}
 		}
@@ -244,7 +243,7 @@ func (tracer *Tenderly) CaptureFault(env *vm.EVM, pc uint64, op vm.OpCode, gas, 
 	}
 
 	call := tracer.callTrace.pop()
-	call.Error = err
+	call.Error = newErr(err.Error())
 	gasUsed := uint64(call.Gas)
 	call.GasUsed = (*hexutil.Uint64)(&gasUsed)
 
@@ -260,7 +259,7 @@ func (tracer *Tenderly) CaptureFault(env *vm.EVM, pc uint64, op vm.OpCode, gas, 
 func (tracer *Tenderly) CaptureEnd(output []byte, gasUsed uint64, t time.Duration, err error) error {
 	tracer.callTrace.first().GasUsed = (*hexutil.Uint64)(&gasUsed)
 	if err != nil {
-		tracer.callTrace.first().Error = err
+		tracer.callTrace.first().Error = newErr(err.Error())
 		return nil
 	}
 
@@ -313,4 +312,8 @@ func add(slice [][]byte, item []byte) [][]byte {
 
 func (tracer *Tenderly) GetResult() (json.RawMessage, error) {
 	return json.Marshal(tracer.callTrace)
+}
+
+func newErr(text string) *string {
+	return &text
 }
