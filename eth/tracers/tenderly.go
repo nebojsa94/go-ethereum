@@ -194,7 +194,7 @@ func (tracer *Tenderly) CaptureState(env *vm.EVM, pc uint64, op vm.OpCode, gas, 
 	}
 
 	if op == vm.REVERT {
-		tracer.callTrace[len(tracer.callTrace)-1].Error = newErr("execution error")
+		tracer.callTrace[tracer.tracePos[len(tracer.callTrace)-1]].Error = newErr("execution error")
 		return nil
 	}
 
@@ -238,19 +238,14 @@ func (tracer *Tenderly) CaptureFault(env *vm.EVM, pc uint64, op vm.OpCode, gas, 
 		tracer.status = false
 	}
 
-	if tracer.callTrace.last().Error != nil {
+	call := tracer.callTrace[tracer.tracePos[len(tracer.tracePos)-1]]
+	if call.Error != nil {
 		return nil
 	}
 
-	call := tracer.callTrace.pop()
 	call.Error = newErr(err.Error())
 	gasUsed := uint64(call.Gas)
 	call.GasUsed = (*hexutil.Uint64)(&gasUsed)
-
-	if depth == 1 {
-		tracer.callTrace.push(call)
-		return nil
-	}
 
 	tracer.popAddress()
 	return nil
