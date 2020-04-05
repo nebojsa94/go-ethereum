@@ -194,7 +194,7 @@ func (tracer *Tenderly) CaptureState(env *vm.EVM, pc uint64, op vm.OpCode, gas, 
 	}
 
 	if op == vm.REVERT {
-		tracer.callTrace[tracer.tracePos[len(tracer.callTrace)-1]].Error = newErr("execution error")
+		tracer.callTrace[tracer.tracePos[len(tracer.tracePos)-1]].Error = newErr("execution error")
 		return nil
 	}
 
