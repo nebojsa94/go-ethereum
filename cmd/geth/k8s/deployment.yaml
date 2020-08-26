@@ -1,0 +1,57 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tenderly-geth
+  labels:
+    app: tenderly-geth
+spec:
+  selector:
+    matchLabels:
+      app: tenderly-geth
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: tenderly-geth
+    spec:
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: fdbcli-status-cronjob
+              image: foundationdb/foundationdb:6.2.20
+              args:
+                - /usr/bin/fdbcli
+                - --exec
+                - 'status'
+              env:
+                - name: FDB_CLUSTER_FILE
+                  value: /mnt/config-volume/cluster-file
+              volumeMounts:
+                - name: config-volume
+                  mountPath: /mnt/config-volume
+          volumes:
+            - name: config-volume
+              configMap:
+                name: sample-cluster-config
+      containers:
+        - name: tenderly-geth
+          image: gcr.io/tenderly-project/tenderly-geth:latest
+          env:
+            - name: "GOOGLE_APPLICATION_CREDENTIALS"
+              value: "/var/run/secrets/cloud.google.com/service-account.json"
+            - name: "PROJECT_ID"
+              value: "tenderly-project"
+          resources:
+            requests:
+              cpu: 0.5
+            limits:
+              cpu: 1
+          volumeMounts:
+            - name: service-account
+              mountPath: "/var/run/secrets/cloud.google.com"
+      volumes:
+        - name: service-account
+          secret:
+            secretName: tenderly-server-service-account
