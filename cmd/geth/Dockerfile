@@ -1,6 +1,6 @@
 FROM golang:1.14-alpine AS build-env
 
-RUN apk add --no-cache make gcc musl-dev linux-headers git curl ca-certificates
+RUN apk add --no-cache make gcc musl-dev linux-headers git curl ca-certificates dpkg
 
 ENV FDB_VERSION 6.2.19
 
