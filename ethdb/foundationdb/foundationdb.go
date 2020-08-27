@@ -321,7 +321,7 @@ func (b *batch) Write() error {
 	}
 
 	// give it some time to think about the commit
-	time.Sleep(200 * time.Millisecond)
+	time.Sleep(100 * time.Millisecond)
 	return b.tr.Commit().Get()
 }
 
