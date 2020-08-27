@@ -1,4 +1,4 @@
-FROM golang:1.14 AS build-env
+FROM golang:1.14
 
 RUN apt-get install make gcc git curl ca-certificates
 
@@ -11,11 +11,5 @@ RUN curl -k -SLO "https://www.foundationdb.org/downloads/${FDB_VERSION}/ubuntu/i
 ADD . /app
 RUN cd /app && make geth
 
-FROM golang:1.14
-
-RUN apt-get install ca-certificates
-
-COPY --from=build-env /app/build/bin/geth /app/geth
-
-ENTRYPOINT ["/app/geth"]
+ENTRYPOINT ["/app/build/bin/geth"]
 CMD ["--goerli", "--syncmode full", "--gcmode archive"]
