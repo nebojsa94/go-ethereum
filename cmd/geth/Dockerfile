@@ -11,5 +11,4 @@ RUN curl -k -SLO "https://www.foundationdb.org/downloads/${FDB_VERSION}/ubuntu/i
 ADD . /app
 RUN cd /app && make geth
 
-ENTRYPOINT ["/app/build/bin/geth"]
-CMD ["--goerli --syncmode \"full\" --gcmode \"archive\""]
+ENTRYPOINT ["/app/build/bin/geth", "--goerli", "--syncmode \"full\"", "--gcmode \"archive\""]
