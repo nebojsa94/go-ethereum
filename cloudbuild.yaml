@@ -1,6 +1,6 @@
 steps:
   - name: "gcr.io/google.com/cloudsdktool/cloud-sdk"
-    id: "deploy"
+    id: "kubectl-test"
     entrypoint: "kubectl"
     args: ["set", "image", "deployment", "$_SERVICE", "$_SERVICE=gcr.io/$PROJECT_ID/$_SERVICE:0.0.15"]
     env:
