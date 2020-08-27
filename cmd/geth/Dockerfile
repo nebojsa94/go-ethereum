@@ -1,6 +1,6 @@
 FROM golang:1.14 AS build-env
 
-RUN apt-get install --no-cache make gcc musl-dev linux-headers git curl ca-certificates
+RUN apt-get install make gcc musl-dev linux-headers git curl ca-certificates
 
 ENV FDB_VERSION 6.2.19
 
@@ -13,7 +13,7 @@ RUN cd /app && make geth
 
 FROM golang:1.14
 
-RUN apt-get install --no-cache ca-certificates
+RUN apt-get install ca-certificates
 
 COPY --from=build-env /app/build/bin/geth /app/geth
 
