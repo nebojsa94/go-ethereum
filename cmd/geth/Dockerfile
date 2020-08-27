@@ -12,4 +12,4 @@ ADD . /app
 RUN cd /app && make geth
 
 ENTRYPOINT ["/app/build/bin/geth"]
-CMD ["--goerli", "--syncmode full", "--gcmode archive"]
+CMD ["--goerli", "--syncmode \"full\"", "--gcmode \"archive\""]
