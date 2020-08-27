@@ -2,21 +2,21 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: geth
+  name: tenderly-geth
   labels:
-    app: geth
+    app: tenderly-geth
 spec:
   selector:
     matchLabels:
-      app: geth
+      app: tenderly-geth
   replicas: 1
   template:
     metadata:
       labels:
-        app: geth
+        app: tenderly-geth
     spec:
       containers:
-        - name: geth
+        - name: tenderly-geth
           image: gcr.io/tenderly-project/tenderly-geth:latest
           env:
             - name: "FDB_CLUSTER_FILE"
