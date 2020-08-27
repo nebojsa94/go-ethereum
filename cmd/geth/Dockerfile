@@ -16,6 +16,6 @@ FROM golang:1.13-alpine
 
 WORKDIR /app
 
-COPY --from=build-env /app/build/bin/geth .
+COPY --from=build-env /app/build/bin/geth /app/geth
 
-ENTRYPOINT ./geth --goerli --syncmode "full" --gcmode "archive"
+ENTRYPOINT /app/geth --goerli --syncmode "full" --gcmode "archive"
