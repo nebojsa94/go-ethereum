@@ -23,14 +23,6 @@ steps:
     args: [ "-c", "docker push gcr.io/$PROJECT_ID/$_SERVICE:latest" ]
 
   - name: "gcr.io/cloud-builders/kubectl"
-    id: "config"
-    args: [ "apply", "-f", "k8s/base/config_prod.yaml" ]
-    env:
-      - "CLOUDSDK_COMPUTE_ZONE=europe-west3-a"
-      - "CLOUDSDK_CONTAINER_CLUSTER=tenderly-container-cluster"
-
-
-  - name: "gcr.io/cloud-builders/kubectl"
     id: "deploy"
     entrypoint: "/bin/bash"
     args: [ "-c", "kubectl set image deployment $_SERVICE $_SERVICE=gcr.io/$PROJECT_ID/$_SERVICE:$(cat _TAG)" ]
