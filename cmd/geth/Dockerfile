@@ -1,4 +1,6 @@
-FROM gcr.io/tenderly-project/build-env:latest AS build-env
+FROM golang:1.14-alpine AS build-env
+
+RUN apk add --no-cache make gcc musl-dev linux-headers git
 
 ENV FDB_VERSION 6.2.19
 
@@ -6,16 +8,14 @@ RUN curl -k -SLO "https://www.foundationdb.org/downloads/${FDB_VERSION}/ubuntu/i
  && dpkg -i foundationdb-clients_${FDB_VERSION}-1_amd64.deb \
  && rm foundationdb-clients_${FDB_VERSION}-1_amd64.deb
 
-WORKDIR /app
-
 ADD . /app
+RUN cd /app && make geth
 
-RUN make geth
+FROM alpine:latest
 
-FROM golang:1.13-alpine
-
-WORKDIR /app
+RUN apk add --no-cache ca-certificates
 
 COPY --from=build-env /app/build/bin/geth /app/geth
 
-ENTRYPOINT ["/app/geth", "--goerli", "--syncmode full", "--gcmode archive"]
+ENTRYPOINT ["/app/geth"]
+CMD ["--goerli", "--syncmode full", "--gcmode archive"]
