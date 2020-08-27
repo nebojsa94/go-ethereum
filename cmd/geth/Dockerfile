@@ -1,6 +1,6 @@
 FROM golang:1.14 AS build-env
 
-RUN apt-get install make gcc musl-dev linux-headers git curl ca-certificates
+RUN apt-get install make gcc git curl ca-certificates
 
 ENV FDB_VERSION 6.2.19
 
