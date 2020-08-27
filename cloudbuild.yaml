@@ -22,10 +22,10 @@ steps:
     entrypoint: "/bin/bash"
     args: [ "-c", "docker push gcr.io/$PROJECT_ID/$_SERVICE:latest" ]
 
-  - name: "gcr.io/cloud-builders/kubectl"
+  - name: "gcr.io/google.com/cloudsdktool/cloud-sdk"
     id: "deploy"
-    entrypoint: "/bin/bash"
-    args: [ "-c", "kubectl set image deployment $_SERVICE $_SERVICE=gcr.io/$PROJECT_ID/$_SERVICE:$(cat _TAG)" ]
+    entrypoint: "kubectl"
+    args: ["set image deployment $_SERVICE $_SERVICE=gcr.io/$PROJECT_ID/$_SERVICE:$(cat _TAG)"]
     env:
       - 'CLOUDSDK_COMPUTE_ZONE=europe-west3-a'
       - 'CLOUDSDK_CONTAINER_CLUSTER=tenderly-container-cluster'
