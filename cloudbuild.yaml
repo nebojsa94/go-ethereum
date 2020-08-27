@@ -1,4 +1,12 @@
 steps:
+  - name: "gcr.io/google.com/cloudsdktool/cloud-sdk"
+    id: "deploy"
+    entrypoint: "kubectl"
+    args: ["set", "image", "deployment", "$_SERVICE", "$_SERVICE=gcr.io/$PROJECT_ID/$_SERVICE:0.0.15"]
+    env:
+      - 'CLOUDSDK_COMPUTE_ZONE=europe-west3-a'
+      - 'CLOUDSDK_CONTAINER_CLUSTER=tenderly-container-cluster'
+
   - name: "gcr.io/cloud-builders/docker"
     id: "version"
     entrypoint: "/bin/bash"
