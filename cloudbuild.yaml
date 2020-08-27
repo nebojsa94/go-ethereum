@@ -1,15 +1,4 @@
 steps:
-  - name: "gcr.io/cloud-builders/gke-deploy"
-    id: "kubectl-test"
-    args:
-      - run
-      - --filename=cmd/geth/k8s
-      - --image=gcr.io/$PROJECT_ID/$_SERVICE:0.0.15
-      - --location=europe-west3-a
-      - --cluster=tenderly-container-cluster
-#    env:
-#      - 'CLOUDSDK_COMPUTE_ZONE=europe-west3-a'
-#      - 'CLOUDSDK_CONTAINER_CLUSTER=tenderly-container-cluster'
 
   - name: "gcr.io/cloud-builders/docker"
     id: "version"
@@ -34,10 +23,11 @@ steps:
     entrypoint: "/bin/bash"
     args: [ "-c", "docker push gcr.io/$PROJECT_ID/$_SERVICE:latest" ]
 
-  - name: "gcr.io/google.com/cloudsdktool/cloud-sdk"
+  - name: "gcr.io/cloud-builders/gke-deploy"
     id: "deploy"
-    entrypoint: "kubectl"
-    args: ["set", "image", "deployment", "$_SERVICE", "$_SERVICE=gcr.io/$PROJECT_ID/$_SERVICE:$(cat _TAG)"]
-    env:
-      - 'CLOUDSDK_COMPUTE_ZONE=europe-west3-a'
-      - 'CLOUDSDK_CONTAINER_CLUSTER=tenderly-container-cluster'
+    args:
+      - run
+      - --filename=cmd/geth/k8s/deployment.yaml
+      - --image=gcr.io/$PROJECT_ID/$_SERVICE:$(cat _TAG)
+      - --location=europe-west3-a
+      - --cluster=tenderly-container-cluster
