@@ -25,7 +25,10 @@ steps:
 
   - name: "gcr.io/cloud-builders/gke-deploy"
     id: "deploy"
+    entrypoint: "/bin/bash"
     args:
+      - -c
+      - gke-deploy
       - run
       - --filename=cmd/geth/k8s/deployment.yaml
       - --image=gcr.io/$PROJECT_ID/$_SERVICE:$(cat _TAG)
