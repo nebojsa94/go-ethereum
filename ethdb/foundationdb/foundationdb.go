@@ -143,6 +143,9 @@ func (db *Database) Get(key []byte) ([]byte, error) {
 
 // Put inserts the given value into the key-value store.
 func (db *Database) Put(key []byte, value []byte) error {
+	if len(key) > 1000 {
+		log.Warn("key larger than 1k", "key", key, "key string", string(key), "value len", len(value))
+	}
 	db.db.Transact(func(tr fdb.Transaction) (interface{}, error) {
 		tr.Set(fdb.Key(key), value)
 		return nil, nil
@@ -295,6 +298,9 @@ func (db *Database) NewBatch() ethdb.Batch {
 
 // Put inserts the given value into the batch for later committing.
 func (b *batch) Put(key, value []byte) error {
+	if len(key) > 1000 {
+		log.Warn("key larger than 1k", "key", key, "key string", string(key), "value len", len(value))
+	}
 	b.tr.Set(fdb.Key(key), value)
 	b.appendRec(keyTypeVal, key, value)
 	b.size += len(value)
