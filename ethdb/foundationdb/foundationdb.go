@@ -70,6 +70,8 @@ func New(file string, cache int, handles int, namespace string) (*Database, erro
 
 	// Open the default database from the system cluster
 	db, err := fdb.OpenDefault()
+	// Optimistically retry
+	db.Options().SetTransactionRetryLimit(-1)
 	if err != nil {
 		return nil, err
 	}
@@ -301,6 +303,9 @@ func (db *Database) NewBatch() ethdb.Batch {
 
 // Put inserts the given value into the batch for later committing.
 func (b *batch) Put(key, value []byte) error {
+	if len(value) > 10000000 {
+		log.Warn("value length exceeds limits", "key", key, "keyString", string(key), "len", len(value))
+	}
 	b.tr.Set(b.ds.Pack(tuple.Tuple{fdb.Key(key)}), value)
 	b.appendRec(keyTypeVal, key, value)
 	b.size += len(value)
