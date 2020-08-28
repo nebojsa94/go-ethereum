@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
+	"github.com/apple/foundationdb/bindings/go/src/fdb/directory"
+	"github.com/apple/foundationdb/bindings/go/src/fdb/tuple"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/log"
@@ -29,8 +31,9 @@ const (
 // functionality it also supports batch writes and iterating over the keyspace in
 // binary-alphabetical order.
 type Database struct {
-	fn string        // filename for reporting
-	db *fdb.Database // FoundationDB instance
+	fn string                      // filename for reporting
+	db *fdb.Database               // FoundationDB instance
+	ds directory.DirectorySubspace // FoundationDB instance
 
 	compTimeMeter      metrics.Meter // Meter for measuring the total time spent in database compaction
 	compReadMeter      metrics.Meter // Meter for measuring the data read during compaction
@@ -73,10 +76,17 @@ func New(file string, cache int, handles int, namespace string) (*Database, erro
 		return nil, err
 	}
 
+	ds, err := directory.CreateOrOpen(db, []string{file}, nil)
+	if err != nil {
+		return nil, err
+	}
+
 	// Assemble the wrapper with all the registered metrics
 	fdb := &Database{
-		fn:       file,
-		db:       &db,
+		fn: file,
+		db: &db,
+		ds: ds,
+
 		log:      logger,
 		quitChan: make(chan chan error),
 	}
@@ -117,7 +127,7 @@ func (db *Database) Close() error {
 // Has retrieves if a key is present in the key-value store.
 func (db *Database) Has(key []byte) (bool, error) {
 	exists, err := db.db.Transact(func(tr fdb.Transaction) (interface{}, error) {
-		exists, err := tr.Get(fdb.Key(key)).Get()
+		exists, err := tr.Get(db.ds.Pack(tuple.Tuple{fdb.Key(key)})).Get()
 		if err != nil {
 			return nil, err
 		}
@@ -135,7 +145,7 @@ func (db *Database) Has(key []byte) (bool, error) {
 // Get retrieves the given key if it's present in the key-value store.
 func (db *Database) Get(key []byte) ([]byte, error) {
 	value, err := db.db.Transact(func(tr fdb.Transaction) (interface{}, error) {
-		return tr.Get(fdb.Key(key)).Get()
+		return tr.Get(db.ds.Pack(tuple.Tuple{fdb.Key(key)})).Get()
 	})
 
 	return value.([]byte), err
@@ -143,12 +153,9 @@ func (db *Database) Get(key []byte) ([]byte, error) {
 
 // Put inserts the given value into the key-value store.
 func (db *Database) Put(key []byte, value []byte) error {
-	if len(key) > 1000 {
-		log.Warn("key larger than 1k", "key", key, "key string", string(key), "value len", len(value))
-	}
-	db.db.Transact(func(tr fdb.Transaction) (interface{}, error) {
-		tr.Set(fdb.Key(key), value)
-		return nil, nil
+	db.db.Transact(func(tr fdb.Transaction) (res interface{}, err error) {
+		tr.Set(db.ds.Pack(tuple.Tuple{fdb.Key(key)}), value)
+		return
 	})
 
 	return nil
@@ -156,9 +163,9 @@ func (db *Database) Put(key []byte, value []byte) error {
 
 // Delete removes the key from the key-value store.
 func (db *Database) Delete(key []byte) error {
-	db.db.Transact(func(tr fdb.Transaction) (interface{}, error) {
-		tr.Clear(fdb.Key(key))
-		return nil, nil
+	db.db.Transact(func(tr fdb.Transaction) (res interface{}, err error) {
+		tr.Clear(db.ds.Pack(tuple.Tuple{fdb.Key(key)}))
+		return
 	})
 
 	return nil
@@ -214,7 +221,7 @@ func (i Iterator) Release() {
 func (db *Database) NewIterator(prefix []byte, start []byte) ethdb.Iterator {
 	iter, _ := db.db.Transact(func(tr fdb.Transaction) (interface{}, error) {
 		iter := tr.GetRange(fdb.KeyRange{
-			Begin: fdb.Key(append(prefix, start...)),
+			Begin: tuple.Tuple{fdb.Key(append(prefix, start...))},
 			End:   nil,
 		}, fdb.RangeOptions{})
 
@@ -275,6 +282,7 @@ func (index batchIndex) kv(data []byte) (key, value []byte) {
 // when Write is called. A batch cannot be used concurrently.
 type batch struct {
 	db *fdb.Database
+	ds directory.DirectorySubspace
 	tr fdb.Transaction
 
 	size int
@@ -292,16 +300,14 @@ func (db *Database) NewBatch() ethdb.Batch {
 	tr, _ := db.db.CreateTransaction()
 	return &batch{
 		db: db.db,
+		ds: db.ds,
 		tr: tr,
 	}
 }
 
 // Put inserts the given value into the batch for later committing.
 func (b *batch) Put(key, value []byte) error {
-	if len(key) > 1000 {
-		log.Warn("key larger than 1k", "key", key, "key string", string(key), "value len", len(value))
-	}
-	b.tr.Set(fdb.Key(key), value)
+	b.tr.Set(b.ds.Pack(tuple.Tuple{fdb.Key(key)}), value)
 	b.appendRec(keyTypeVal, key, value)
 	b.size += len(value)
 	return nil
@@ -309,7 +315,7 @@ func (b *batch) Put(key, value []byte) error {
 
 // Delete inserts the a key removal into the batch for later committing.
 func (b *batch) Delete(key []byte) error {
-	b.tr.Clear(fdb.Key(key))
+	b.tr.Clear(tuple.Tuple{fdb.Key(key)})
 	b.appendRec(keyTypeDel, key, nil)
 	b.size++
 	return nil
@@ -327,7 +333,7 @@ func (b *batch) Write() error {
 	}
 
 	// give it some time to think about the commit
-	time.Sleep(10 * time.Millisecond)
+	time.Sleep(5 * time.Millisecond)
 	return b.tr.Commit().Get()
 }
 
