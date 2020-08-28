@@ -11,7 +11,6 @@ import (
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/metrics"
-	"github.com/syndtr/goleveldb/leveldb/util"
 )
 
 const (
@@ -219,11 +218,7 @@ func (i Iterator) Release() {
 // initial key (or after, if it does not exist).
 func (db *Database) NewIterator(prefix []byte, start []byte) ethdb.Iterator {
 	iter, _ := db.db.Transact(func(tr fdb.Transaction) (interface{}, error) {
-		iter := tr.GetRange(fdb.KeyRange{
-			Begin: tuple.Tuple{fdb.Key(append(prefix, start...))},
-			End:   nil,
-		}, fdb.RangeOptions{})
-
+		iter := tr.GetRange(bytesPrefixRange(prefix, start), fdb.RangeOptions{})
 		return &Iterator{rangeIterator: iter.Iterator()}, nil
 	})
 
@@ -426,8 +421,8 @@ func (r *replayer) Delete(key []byte) {
 // bytesPrefixRange returns key range that satisfy
 // - the given prefix, and
 // - the given seek position
-func bytesPrefixRange(prefix, start []byte) *util.Range {
-	r := util.BytesPrefix(prefix)
-	r.Start = append(r.Start, start...)
+func bytesPrefixRange(prefix, start []byte) fdb.Range {
+	r, _ := fdb.PrefixRange(prefix) // ignore error
+	r.Begin = append(r.Begin.FDBKey(), start...)
 	return r
 }
