@@ -3,7 +3,6 @@ package foundationdb
 import (
 	"encoding/binary"
 	"sync"
-	"time"
 
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
 	"github.com/apple/foundationdb/bindings/go/src/fdb/directory"
@@ -332,8 +331,6 @@ func (b *batch) Write() error {
 		return nil
 	}
 
-	// give it some time to think about the commit
-	time.Sleep(5 * time.Millisecond)
 	return b.tr.Commit().Get()
 }
 
