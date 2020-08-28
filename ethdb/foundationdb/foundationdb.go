@@ -222,7 +222,7 @@ func (db *Database) NewIterator(prefix []byte, start []byte) ethdb.Iterator {
 		return &Iterator{rangeIterator: iter.Iterator()}, nil
 	})
 
-	return iter.(Iterator)
+	return iter.(*Iterator)
 }
 
 // Stat returns a particular internal stat of the database.
