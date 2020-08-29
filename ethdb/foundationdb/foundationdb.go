@@ -2,6 +2,7 @@ package foundationdb
 
 import (
 	"encoding/binary"
+	"math"
 	"sync"
 
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
@@ -23,7 +24,12 @@ const (
 	minHandles = 16
 
 	batchGrowRec = 3000
+
+	// maximum value size supported by the FoundationDB
+	maxValueLength = 100000
 )
+
+var rangeValue = []byte("rangerangerange")
 
 // Database is a persistent key-value store. Apart from basic data storage
 // functionality it also supports batch writes and iterating over the keyspace in
@@ -145,7 +151,23 @@ func (db *Database) Has(key []byte) (bool, error) {
 // Get retrieves the given key if it's present in the key-value store.
 func (db *Database) Get(key []byte) ([]byte, error) {
 	value, err := db.db.Transact(func(tr fdb.Transaction) (interface{}, error) {
-		return tr.Get(db.ds.Pack(tuple.Tuple{fdb.Key(key)})).Get()
+		val, err := tr.Get(db.ds.Pack(tuple.Tuple{fdb.Key(key)})).Get()
+		if err != nil || !isRange(val) {
+			return val, err
+		}
+
+		iter := tr.GetRange(bytesPrefixRange(key, []byte{}), fdb.RangeOptions{})
+		values, err := iter.GetSliceWithError()
+		if err != nil {
+			return nil, err
+		}
+
+		var v []byte
+		for _, kv := range values {
+			v = append(v, kv.Value...)
+		}
+
+		return v, nil
 	})
 
 	return value.([]byte), err
@@ -154,7 +176,28 @@ func (db *Database) Get(key []byte) ([]byte, error) {
 // Put inserts the given value into the key-value store.
 func (db *Database) Put(key []byte, value []byte) error {
 	db.db.Transact(func(tr fdb.Transaction) (res interface{}, err error) {
-		tr.Set(db.ds.Pack(tuple.Tuple{fdb.Key(key)}), value)
+		count := int(math.Ceil(float64(len(value)) / float64(maxValueLength)))
+		// TODO: panic when count > 255
+
+		if count != 1 {
+			tr.Set(db.ds.Pack(tuple.Tuple{fdb.Key(key)}), rangeValue)
+		}
+
+		for i := 0; i < count; i++ {
+			end := (i + 1) * maxValueLength
+			if end > len(value) {
+				end = len(value)
+			}
+
+			k := key
+			if count != 1 {
+				k = append(k, byte(i))
+			}
+			v := value[i*maxValueLength : end]
+
+			tr.Set(db.ds.Pack(tuple.Tuple{fdb.Key(k)}), v)
+		}
+
 		return
 	})
 
@@ -164,6 +207,7 @@ func (db *Database) Put(key []byte, value []byte) error {
 // Delete removes the key from the key-value store.
 func (db *Database) Delete(key []byte) error {
 	db.db.Transact(func(tr fdb.Transaction) (res interface{}, err error) {
+		// TODO delete range
 		tr.Clear(db.ds.Pack(tuple.Tuple{fdb.Key(key)}))
 		return
 	})
@@ -173,13 +217,14 @@ func (db *Database) Delete(key []byte) error {
 
 type Iterator struct {
 	rangeIterator *fdb.RangeIterator
+	db            *Database
 
 	key   []byte
 	value []byte
 	err   error
 }
 
-func (i Iterator) Next() bool {
+func (i *Iterator) Next() bool {
 	if i.rangeIterator == nil {
 		return false
 	}
@@ -189,6 +234,15 @@ func (i Iterator) Next() bool {
 	}
 
 	kv, err := i.rangeIterator.Get()
+
+	if isRange(kv.Value) {
+		value, err := i.db.Get(kv.Key)
+		if err != nil {
+			return false
+		}
+
+		kv.Value = value
+	}
 	i.key = kv.Key
 	i.value = kv.Value
 	i.err = err
@@ -196,19 +250,19 @@ func (i Iterator) Next() bool {
 	return true
 }
 
-func (i Iterator) Error() error {
+func (i *Iterator) Error() error {
 	return i.err
 }
 
-func (i Iterator) Key() []byte {
+func (i *Iterator) Key() []byte {
 	return i.key
 }
 
-func (i Iterator) Value() []byte {
+func (i *Iterator) Value() []byte {
 	return i.value
 }
 
-func (i Iterator) Release() {
+func (i *Iterator) Release() {
 	i.rangeIterator = nil
 	i.key = nil
 	i.value = nil
@@ -221,7 +275,10 @@ func (i Iterator) Release() {
 func (db *Database) NewIterator(prefix []byte, start []byte) ethdb.Iterator {
 	iter, _ := db.db.Transact(func(tr fdb.Transaction) (interface{}, error) {
 		iter := tr.GetRange(bytesPrefixRange(prefix, start), fdb.RangeOptions{})
-		return &Iterator{rangeIterator: iter.Iterator()}, nil
+		return &Iterator{
+			rangeIterator: iter.Iterator(),
+			db:            db,
+		}, nil
 	})
 
 	return iter.(*Iterator)
@@ -303,11 +360,30 @@ func (db *Database) NewBatch() ethdb.Batch {
 
 // Put inserts the given value into the batch for later committing.
 func (b *batch) Put(key, value []byte) error {
-	if len(value) > 10000000 {
-		log.Warn("value length exceeds limits", "key", key, "keyString", string(key), "len", len(value))
+	count := int(math.Ceil(float64(len(value)) / float64(maxValueLength)))
+	// TODO: panic when count > 255
+
+	if count != 1 {
+		b.tr.Set(b.ds.Pack(tuple.Tuple{fdb.Key(key)}), rangeValue)
+		b.appendRec(keyTypeVal, key, rangeValue)
 	}
-	b.tr.Set(b.ds.Pack(tuple.Tuple{fdb.Key(key)}), value)
-	b.appendRec(keyTypeVal, key, value)
+
+	for i := 0; i < count; i++ {
+		end := (i + 1) * maxValueLength
+		if end > len(value) {
+			end = len(value)
+		}
+
+		k := key
+		if count != 1 {
+			k = append(k, byte(i))
+		}
+		v := value[i*maxValueLength : end]
+
+		b.tr.Set(b.ds.Pack(tuple.Tuple{fdb.Key(k)}), v)
+		b.appendRec(keyTypeVal, k, v)
+	}
+
 	b.size += len(value)
 	return nil
 }
@@ -421,6 +497,25 @@ func (r *replayer) Delete(key []byte) {
 		return
 	}
 	r.failure = r.writer.Delete(key)
+}
+
+func isRange(value interface{}) bool {
+	bytes, ok := value.([]byte)
+	if !ok {
+		return false
+	}
+
+	if len(bytes) != len(rangeValue) {
+		return false
+	}
+
+	for i, v := range bytes {
+		if v != rangeValue[i] {
+			return false
+		}
+	}
+
+	return true
 }
 
 // bytesPrefixRange returns key range that satisfy
