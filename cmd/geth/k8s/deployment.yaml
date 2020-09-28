@@ -18,6 +18,8 @@ spec:
       containers:
         - name: tenderly-geth
           image: gcr.io/tenderly-project/tenderly-geth:latest
+          command: ["/app/build/bin/geth"]
+          args: ["--goerli", "--datadir", "5", "--syncmode", "full", "--gcmode", "archive"
           env:
             - name: "FDB_CLUSTER_FILE"
               value: "/mnt/config-volume/cluster-file"
