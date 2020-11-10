@@ -43,4 +43,4 @@ spec:
             secretName: tenderly-server-service-account
         - name: config-volume
           configMap:
-            name: fdb-test-cluster-config
+            name: fdb-cluster-config

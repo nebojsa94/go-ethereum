@@ -555,8 +555,13 @@ func chunksAndEncodingSize(length int) (int, int) {
 	return chunks, size
 }
 
-func encodeForSize(i, size int) []byte {
-	bs := make([]byte, size)
-	binary.LittleEndian.PutUint32(bs, uint32(i))
-	return bs
+func encodeForSize(k, size int) []byte {
+	b := make([]byte, size)
+
+	for i := 0; i < size-1; i++ {
+		b[i] = byte(k >> 8 * (size - i - 1))
+	}
+	b[size-1] = byte(k)
+
+	return b
 }
