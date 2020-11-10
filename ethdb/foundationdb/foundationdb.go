@@ -154,7 +154,7 @@ func (db *Database) Get(key []byte) ([]byte, error) {
 			return val, err
 		}
 
-		iter := tr.GetRange(bytesPrefixRange(db.key(key).FDBKey(), []byte{}), fdb.RangeOptions{})
+		iter := tr.GetRange(bytesPrefixRange(db.key(key).FDBKey(), []byte{0}), fdb.RangeOptions{})
 		values, err := iter.GetSliceWithError()
 		if err != nil {
 			return nil, err
@@ -181,7 +181,7 @@ func (db *Database) Put(key []byte, value []byte) error {
 
 		//write in batches
 		chunks, size := chunksAndEncodingSize(len(value))
-		tr.Set(db.key(key), append(rangeValue, encodeForSize(chunks, size)...))
+		tr.Set(db.key(key), rangeValue)
 		for i := 0; i < chunks; i++ {
 			end := (i + 1) * chunkSize
 			if end > len(value) {
@@ -203,7 +203,6 @@ func (db *Database) Put(key []byte, value []byte) error {
 func (db *Database) Delete(key []byte) error {
 	_, err := db.db.Transact(func(tr fdb.Transaction) (res interface{}, err error) {
 		tr.ClearRange(bytesPrefixRange(db.key(key).FDBKey(), nil))
-		tr.Clear(db.key(key))
 		return
 	})
 
@@ -372,9 +371,8 @@ func (b *batch) Put(key, value []byte) error {
 	}
 
 	chunks, size := chunksAndEncodingSize(len(value))
-	rangeVal := append(rangeValue, encodeForSize(chunks, size)...)
-	b.tr.Set(b.db.key(key), rangeVal)
-	b.appendRec(keyTypeVal, key, rangeVal)
+	b.tr.Set(b.db.key(key), rangeValue)
+	b.appendRec(keyTypeVal, key, rangeValue)
 
 	for i := 0; i < chunks; i++ {
 		end := (i + 1) * chunkSize
@@ -396,7 +394,6 @@ func (b *batch) Put(key, value []byte) error {
 // Delete inserts the a key removal into the batch for later committing.
 func (b *batch) Delete(key []byte) error {
 	b.tr.ClearRange(bytesPrefixRange(b.db.key(key).FDBKey(), nil))
-	b.tr.Clear(b.db.key(key))
 	b.appendRec(keyTypeDel, key, nil)
 	b.size++
 	return nil
