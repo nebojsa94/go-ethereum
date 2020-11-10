@@ -2,12 +2,10 @@ package foundationdb
 
 import (
 	"encoding/binary"
-	"math"
 	"sync"
 
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
 	"github.com/apple/foundationdb/bindings/go/src/fdb/directory"
-	"github.com/apple/foundationdb/bindings/go/src/fdb/tuple"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/log"
@@ -25,8 +23,11 @@ const (
 
 	batchGrowRec = 3000
 
-	// maximum value size supported by the FoundationDB
-	maxValueLength = 100000
+	// chunkSize optimal for the FoundationDB
+	chunkSize = 10000
+
+	// number of retries when writing batch
+	batchRetries = 5
 )
 
 var rangeValue = []byte("rangerangerange")
@@ -35,9 +36,10 @@ var rangeValue = []byte("rangerangerange")
 // functionality it also supports batch writes and iterating over the keyspace in
 // binary-alphabetical order.
 type Database struct {
-	fn string                      // filename for reporting
-	db *fdb.Database               // FoundationDB instance
-	ds directory.DirectorySubspace // FoundationDB instance
+	prefix []byte
+
+	fn string        // filename for reporting
+	db *fdb.Database // FoundationDB instance
 
 	compTimeMeter      metrics.Meter // Meter for measuring the total time spent in database compaction
 	compReadMeter      metrics.Meter // Meter for measuring the data read during compaction
@@ -82,16 +84,12 @@ func New(file string, cache int, handles int, namespace string) (*Database, erro
 		return nil, err
 	}
 
-	ds, err := directory.CreateOrOpen(db, []string{file}, nil)
-	if err != nil {
-		return nil, err
-	}
-
 	// Assemble the wrapper with all the registered metrics
 	fdb := &Database{
+		prefix: []byte(file[len(file)-16 : len(file)-15]),
+
 		fn: file,
 		db: &db,
-		ds: ds,
 
 		log:      logger,
 		quitChan: make(chan chan error),
@@ -133,7 +131,7 @@ func (db *Database) Close() error {
 // Has retrieves if a key is present in the key-value store.
 func (db *Database) Has(key []byte) (bool, error) {
 	exists, err := db.db.Transact(func(tr fdb.Transaction) (interface{}, error) {
-		exists, err := tr.Get(db.ds.Pack(tuple.Tuple{fdb.Key(key)})).Get()
+		exists, err := tr.Get(db.key(key)).Get()
 		if err != nil {
 			return nil, err
 		}
@@ -151,12 +149,12 @@ func (db *Database) Has(key []byte) (bool, error) {
 // Get retrieves the given key if it's present in the key-value store.
 func (db *Database) Get(key []byte) ([]byte, error) {
 	value, err := db.db.Transact(func(tr fdb.Transaction) (interface{}, error) {
-		val, err := tr.Get(db.ds.Pack(tuple.Tuple{fdb.Key(key)})).Get()
+		val, err := tr.Get(db.key(key)).Get()
 		if err != nil || !isRange(val) {
 			return val, err
 		}
 
-		iter := tr.GetRange(bytesPrefixRange(key, []byte{}), fdb.RangeOptions{})
+		iter := tr.GetRange(bytesPrefixRange(db.key(key).FDBKey(), []byte{}), fdb.RangeOptions{})
 		values, err := iter.GetSliceWithError()
 		if err != nil {
 			return nil, err
@@ -175,44 +173,45 @@ func (db *Database) Get(key []byte) ([]byte, error) {
 
 // Put inserts the given value into the key-value store.
 func (db *Database) Put(key []byte, value []byte) error {
-	db.db.Transact(func(tr fdb.Transaction) (res interface{}, err error) {
-		count := int(math.Ceil(float64(len(value)) / float64(maxValueLength)))
-		// TODO: panic when count > 255
-
-		if count != 1 {
-			tr.Set(db.ds.Pack(tuple.Tuple{fdb.Key(key)}), rangeValue)
+	_, err := db.db.Transact(func(tr fdb.Transaction) (res interface{}, err error) {
+		if len(value) < chunkSize {
+			tr.Set(db.key(key), value)
+			return
 		}
 
-		for i := 0; i < count; i++ {
-			end := (i + 1) * maxValueLength
+		//write in batches
+		chunks, size := chunksAndEncodingSize(len(value))
+		tr.Set(db.key(key), append(rangeValue, encodeForSize(chunks, size)...))
+		for i := 0; i <= chunks; i++ {
+			end := (i + 1) * chunkSize
 			if end > len(value) {
 				end = len(value)
 			}
 
-			k := key
-			if count != 1 {
-				k = append(k, byte(i))
-			}
-			v := value[i*maxValueLength : end]
+			v := value[i*chunkSize : end]
 
-			tr.Set(db.ds.Pack(tuple.Tuple{fdb.Key(k)}), v)
+			tr.Set(db.key(append(key, encodeForSize(i, size)...)), v)
 		}
 
 		return
 	})
 
-	return nil
+	return err
 }
 
 // Delete removes the key from the key-value store.
 func (db *Database) Delete(key []byte) error {
-	db.db.Transact(func(tr fdb.Transaction) (res interface{}, err error) {
-		// TODO delete range
-		tr.Clear(db.ds.Pack(tuple.Tuple{fdb.Key(key)}))
+	_, err := db.db.Transact(func(tr fdb.Transaction) (res interface{}, err error) {
+		tr.ClearRange(bytesPrefixRange(db.key(key).FDBKey(), nil))
+		tr.Clear(db.key(key))
 		return
 	})
 
-	return nil
+	return err
+}
+
+func (db *Database) key(key []byte) fdb.KeyConvertible {
+	return fdb.Key(append(db.prefix, key...))
 }
 
 type Iterator struct {
@@ -247,6 +246,10 @@ func (i *Iterator) Next() bool {
 	i.value = kv.Value
 	i.err = err
 
+	if err != nil {
+		return false
+	}
+
 	return true
 }
 
@@ -255,7 +258,7 @@ func (i *Iterator) Error() error {
 }
 
 func (i *Iterator) Key() []byte {
-	return i.key
+	return i.key[len(i.db.prefix):]
 }
 
 func (i *Iterator) Value() []byte {
@@ -274,7 +277,9 @@ func (i *Iterator) Release() {
 // initial key (or after, if it does not exist).
 func (db *Database) NewIterator(prefix []byte, start []byte) ethdb.Iterator {
 	iter, _ := db.db.Transact(func(tr fdb.Transaction) (interface{}, error) {
-		iter := tr.GetRange(bytesPrefixRange(prefix, start), fdb.RangeOptions{})
+		iter := tr.GetRange(bytesPrefixRange(db.key(prefix).FDBKey(), start), fdb.RangeOptions{
+			Mode: fdb.StreamingModeWantAll,
+		})
 		return &Iterator{
 			rangeIterator: iter.Iterator(),
 			db:            db,
@@ -334,7 +339,7 @@ func (index batchIndex) kv(data []byte) (key, value []byte) {
 // batch is a write-only FoundationDB transaction that commits changes to its host database
 // when Write is called. A batch cannot be used concurrently.
 type batch struct {
-	db *fdb.Database
+	db *Database
 	ds directory.DirectorySubspace
 	tr fdb.Transaction
 
@@ -352,36 +357,36 @@ type batch struct {
 func (db *Database) NewBatch() ethdb.Batch {
 	tr, _ := db.db.CreateTransaction()
 	return &batch{
-		db: db.db,
-		ds: db.ds,
+		db: db,
 		tr: tr,
 	}
 }
 
 // Put inserts the given value into the batch for later committing.
 func (b *batch) Put(key, value []byte) error {
-	count := int(math.Ceil(float64(len(value)) / float64(maxValueLength)))
-	// TODO: panic when count > 255
-
-	if count != 1 {
-		b.tr.Set(b.ds.Pack(tuple.Tuple{fdb.Key(key)}), rangeValue)
-		b.appendRec(keyTypeVal, key, rangeValue)
+	if len(value) < chunkSize {
+		b.tr.Set(b.db.key(key), value)
+		b.appendRec(keyTypeVal, key, value)
+		b.size += len(value)
+		return nil
 	}
 
-	for i := 0; i < count; i++ {
-		end := (i + 1) * maxValueLength
+	chunks, size := chunksAndEncodingSize(len(value))
+	rangeVal := append(rangeValue, encodeForSize(chunks, size)...)
+	b.tr.Set(b.db.key(key), rangeVal)
+	b.appendRec(keyTypeVal, key, rangeVal)
+
+	for i := 0; i <= chunks; i++ {
+		end := (i + 1) * chunkSize
 		if end > len(value) {
 			end = len(value)
 		}
 
-		k := key
-		if count != 1 {
-			k = append(k, byte(i))
-		}
-		v := value[i*maxValueLength : end]
+		v := value[i*chunkSize : end]
 
-		b.tr.Set(b.ds.Pack(tuple.Tuple{fdb.Key(k)}), v)
-		b.appendRec(keyTypeVal, k, v)
+		child := b.db.key(append(key, encodeForSize(i, size)...))
+		b.tr.Set(child, v)
+		b.appendRec(keyTypeVal, child.FDBKey(), v)
 	}
 
 	b.size += len(value)
@@ -390,7 +395,8 @@ func (b *batch) Put(key, value []byte) error {
 
 // Delete inserts the a key removal into the batch for later committing.
 func (b *batch) Delete(key []byte) error {
-	b.tr.Clear(tuple.Tuple{fdb.Key(key)})
+	b.tr.ClearRange(bytesPrefixRange(b.db.key(key).FDBKey(), nil))
+	b.tr.Clear(b.db.key(key))
 	b.appendRec(keyTypeDel, key, nil)
 	b.size++
 	return nil
@@ -403,16 +409,20 @@ func (b *batch) ValueSize() int {
 
 // Write flushes any accumulated data to disk.
 func (b *batch) Write() error {
-	if b.size == 0 {
-		return nil
+	var err error
+	for i := 0; i < batchRetries; i++ {
+		err = b.tr.Commit().Get()
+		if err == nil {
+			return nil
+		}
 	}
 
-	return b.tr.Commit().Get()
+	return err
 }
 
 // Reset resets the batch for reuse.
 func (b *batch) Reset() {
-	b.tr, _ = b.db.CreateTransaction()
+	b.tr, _ = b.db.db.CreateTransaction()
 	b.data = b.data[:0]
 	b.index = b.index[:0]
 
@@ -521,8 +531,32 @@ func isRange(value interface{}) bool {
 // bytesPrefixRange returns key range that satisfy
 // - the given prefix, and
 // - the given seek position
-func bytesPrefixRange(prefix, start []byte) fdb.Range {
+func bytesPrefixRange(prefix, start []byte) fdb.KeyRange {
 	r, _ := fdb.PrefixRange(prefix) // ignore error
 	r.Begin = append(r.Begin.FDBKey(), start...)
 	return r
+}
+
+func chunksAndEncodingSize(length int) (int, int) {
+	var chunks int
+	if length%chunkSize == 0 {
+		chunks = length / chunkSize
+	} else {
+		chunks = length/chunkSize + 1
+	}
+
+	tmp := chunks
+	var size int
+	for tmp > 1 {
+		size++
+		tmp = tmp / 256
+	}
+
+	return chunks, size
+}
+
+func encodeForSize(i, size int) []byte {
+	bs := make([]byte, size)
+	binary.LittleEndian.PutUint32(bs, uint32(i))
+	return bs
 }
