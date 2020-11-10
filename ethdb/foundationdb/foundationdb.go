@@ -182,7 +182,7 @@ func (db *Database) Put(key []byte, value []byte) error {
 		//write in batches
 		chunks, size := chunksAndEncodingSize(len(value))
 		tr.Set(db.key(key), append(rangeValue, encodeForSize(chunks, size)...))
-		for i := 0; i <= chunks; i++ {
+		for i := 0; i < chunks; i++ {
 			end := (i + 1) * chunkSize
 			if end > len(value) {
 				end = len(value)
@@ -376,7 +376,7 @@ func (b *batch) Put(key, value []byte) error {
 	b.tr.Set(b.db.key(key), rangeVal)
 	b.appendRec(keyTypeVal, key, rangeVal)
 
-	for i := 0; i <= chunks; i++ {
+	for i := 0; i < chunks; i++ {
 		end := (i + 1) * chunkSize
 		if end > len(value) {
 			end = len(value)
