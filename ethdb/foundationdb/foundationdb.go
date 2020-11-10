@@ -5,7 +5,6 @@ import (
 	"sync"
 
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
-	"github.com/apple/foundationdb/bindings/go/src/fdb/directory"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/log"
@@ -242,7 +241,26 @@ func (i *Iterator) Next() bool {
 		kv.Value = value
 	}
 	i.key = kv.Key
-	i.value = kv.Value
+
+	if !isRange(kv.Value) {
+		i.value = kv.Value
+	} else {
+		res, err := i.db.db.Transact(func(tr fdb.Transaction) (interface{}, error) {
+			iter := tr.GetRange(bytesPrefixRange(i.db.key(i.key).FDBKey(), []byte{0}), fdb.RangeOptions{})
+			values, err := iter.GetSliceWithError()
+			if err != nil {
+				return nil, err
+			}
+
+			var v []byte
+			for _, kv := range values {
+				v = append(v, kv.Value...)
+			}
+			return v, nil
+		})
+		i.value, i.err = res.([]byte), err
+	}
+
 	i.err = err
 
 	if err != nil {
@@ -339,7 +357,6 @@ func (index batchIndex) kv(data []byte) (key, value []byte) {
 // when Write is called. A batch cannot be used concurrently.
 type batch struct {
 	db *Database
-	ds directory.DirectorySubspace
 	tr fdb.Transaction
 
 	size int
@@ -372,7 +389,7 @@ func (b *batch) Put(key, value []byte) error {
 
 	chunks, size := chunksAndEncodingSize(len(value))
 	b.tr.Set(b.db.key(key), rangeValue)
-	b.appendRec(keyTypeVal, key, rangeValue)
+	b.appendRec(keyTypeVal, key, value)
 
 	for i := 0; i < chunks; i++ {
 		end := (i + 1) * chunkSize
@@ -384,7 +401,6 @@ func (b *batch) Put(key, value []byte) error {
 
 		child := b.db.key(append(key, encodeForSize(i, size)...))
 		b.tr.Set(child, v)
-		b.appendRec(keyTypeVal, child.FDBKey(), v)
 	}
 
 	b.size += len(value)
