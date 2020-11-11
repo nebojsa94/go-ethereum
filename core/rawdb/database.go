@@ -213,12 +213,12 @@ func NewLevelDBDatabaseWithFreezer(file string, cache int, handles int, freezer 
 	if err != nil {
 		return nil, err
 	}
-	frdb, err := NewDatabaseWithFreezer(kvdb, freezer, namespace)
-	if err != nil {
-		kvdb.Close()
-		return nil, err
-	}
-	return frdb, nil
+	//frdb, err := NewDatabaseWithFreezer(kvdb, freezer, namespace)
+	//if err != nil {
+	//	kvdb.Close()
+	//	return nil, err
+	//}
+	return NewDatabase(kvdb), nil
 }
 
 // InspectDatabase traverses the entire database and checks the size
