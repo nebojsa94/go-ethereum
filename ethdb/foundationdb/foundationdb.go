@@ -173,7 +173,7 @@ func (db *Database) Get(key []byte) ([]byte, error) {
 // Put inserts the given value into the key-value store.
 func (db *Database) Put(key []byte, value []byte) error {
 	_, err := db.db.Transact(func(tr fdb.Transaction) (res interface{}, err error) {
-		if len(value) < chunkSize {
+		if len(value) <= chunkSize {
 			tr.Set(db.key(key), value)
 			return
 		}
@@ -380,7 +380,7 @@ func (db *Database) NewBatch() ethdb.Batch {
 
 // Put inserts the given value into the batch for later committing.
 func (b *batch) Put(key, value []byte) error {
-	if len(value) < chunkSize {
+	if len(value) <= chunkSize {
 		b.tr.Set(b.db.key(key), value)
 		b.appendRec(keyTypeVal, key, value)
 		b.size += len(value)
