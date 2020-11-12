@@ -430,12 +430,14 @@ func (b *batch) Write() error {
 		}
 	}
 
+	log.Error("error writing batch", "size", b.size, "internalLen", b.internalLen)
+
 	return err
 }
 
 // Reset resets the batch for reuse.
 func (b *batch) Reset() {
-	b.tr, _ = b.db.db.CreateTransaction()
+	b.tr.Reset()
 	b.data = b.data[:0]
 	b.index = b.index[:0]
 
