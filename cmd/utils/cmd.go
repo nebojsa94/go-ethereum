@@ -21,7 +21,6 @@ import (
 	"compress/gzip"
 	"fmt"
 	"io"
-	"net/http"
 	"os"
 	"os/signal"
 	"runtime"
@@ -88,24 +87,11 @@ func StartNode(stack *node.Node) {
 
 func ImportChain(chain *core.BlockChain, fn string) error {
 	if strings.HasPrefix(fn, "http") {
-		log.Info("Download export file", "url", fn)
-		resp, err := http.Get(fn)
+		var err error
+		fn, err = downloadBackup(fn)
 		if err != nil {
 			return err
 		}
-		defer resp.Body.Close()
-
-		// Create the file
-		fn = "export.backup"
-		out, err := os.Create(fn)
-		if err != nil {
-			return err
-		}
-		defer out.Close()
-
-		// Write the body to file
-		_, err = io.Copy(out, resp.Body)
-		return err
 	}
 
 	// Watch for Ctrl-C while the import is running.
