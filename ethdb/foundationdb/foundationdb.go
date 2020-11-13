@@ -90,8 +90,7 @@ func New(file string, cache int, handles int, namespace string) (*Database, erro
 		fn: file,
 		db: &db,
 
-		log:      logger,
-		quitChan: make(chan chan error),
+		log: logger,
 	}
 	fdb.compTimeMeter = metrics.NewRegisteredMeter(namespace+"compact/time", nil)
 	fdb.compReadMeter = metrics.NewRegisteredMeter(namespace+"compact/input", nil)
