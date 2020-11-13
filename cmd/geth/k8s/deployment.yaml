@@ -19,7 +19,7 @@ spec:
         - name: tenderly-geth
           image: gcr.io/tenderly-project/tenderly-geth:latest
           command: ["/app/build/bin/geth"]
-          args: ["--goerli", "--datadir", "5", "--syncmode", "full", "--gcmode", "archive"]
+          args: ["--goerli", "--datadir", "5", "--syncmode", "full", "--gcmode", "archive", "--cache", "4096", "--rpc", "--rpcaddr", "0.0.0.0", "--rpcapi", "eth,net,web3,admin,debug,personal,txpool", "--rpccorsdomain", "*", "--rpcvhosts", "*"]
           env:
             - name: "FDB_CLUSTER_FILE"
               value: "/mnt/config-volume/cluster-file"
@@ -32,6 +32,11 @@ spec:
               cpu: 1
             limits:
               cpu: 2
+          ports:
+            - name: rpc
+              containerPort: 8545
+            - name: node
+              containerPort: 30303
           volumeMounts:
             - name: service-account
               mountPath: "/var/run/secrets/cloud.google.com"

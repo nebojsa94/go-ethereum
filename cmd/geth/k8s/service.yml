@@ -1,0 +1,18 @@
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: tenderly-geth
+  labels:
+    app: tenderly-geth
+spec:
+  type: LoadBalancer
+  ports:
+    - name: rpc
+      port: 8545
+      targetPort: 8545
+    - name: node
+      port: 30303
+      targetPort: 30303
+  selector:
+    app: tenderly-geth
