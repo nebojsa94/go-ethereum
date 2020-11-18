@@ -403,6 +403,7 @@ func (c *ChainIndexer) processSection(section uint64, lastHead common.Hash) (com
 		if header == nil {
 			return common.Hash{}, fmt.Errorf("block #%d [%x…] not found", number, hash[:4])
 		} else if header.ParentHash != lastHead {
+			log.Error("Process section", "section", section, "last head", lastHead.String(), "parent hash", header.ParentHash.String())
 			return common.Hash{}, fmt.Errorf("chain reorged during section processing")
 		}
 		if err := c.backend.Process(c.ctx, header); err != nil {
