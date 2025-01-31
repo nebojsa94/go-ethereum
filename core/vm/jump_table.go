@@ -94,6 +94,10 @@ func newShanghaiInstructionSet() JumpTable {
 	instructionSet := newMergeInstructionSet()
 	enable3855(&instructionSet) // PUSH0 instruction
 	enable3860(&instructionSet) // Limit and meter initcode
+	instructionSet[SLOAD].constantGas = 200
+	instructionSet[SLOAD].dynamicGas = nil
+	instructionSet[SSTORE].constantGas = 20000
+	instructionSet[SSTORE].dynamicGas = nil
 
 	return validate(instructionSet)
 }
